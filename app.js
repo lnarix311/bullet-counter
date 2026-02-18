@@ -223,6 +223,7 @@ class LatencyGraph {
     this.target = this.current;
     this.animId = null;
     this.running = false;
+    this.hue = 180; // start at cyan
 
     this._resize();
     window.addEventListener('resize', () => this._resize());
@@ -287,68 +288,93 @@ class LatencyGraph {
       return;
     }
 
+    // Advance hue (~1 degree per frame for smooth rainbow cycling)
+    this.hue = (this.hue + 0.8) % 360;
+    const hue = this.hue;
+    const lineColor = `hsl(${hue}, 100%, 60%)`;
+    const glowColor = `hsla(${hue}, 100%, 60%, 0.6)`;
+    const fillTop = `hsla(${hue}, 100%, 60%, 0.15)`;
+    const fillBot = `hsla(${hue}, 100%, 60%, 0.01)`;
+    const guideColor = `hsla(${hue}, 100%, 60%, 0.1)`;
+
+    // Update the value readout color to match
+    this.valueEl.style.color = lineColor;
+    this.valueEl.style.textShadow = `0 0 8px ${glowColor}`;
+
     // Draw guide lines (dashed, dim)
-    ctx.strokeStyle = 'rgba(0, 240, 255, 0.1)';
+    ctx.strokeStyle = guideColor;
     ctx.lineWidth = 0.5;
     ctx.setLineDash([4, 4]);
-    // Top line (max)
     ctx.beginPath();
     ctx.moveTo(pad, pad);
     ctx.lineTo(pad + drawW, pad);
     ctx.stroke();
-    // Bottom line (min)
     ctx.beginPath();
     ctx.moveTo(pad, pad + drawH);
     ctx.lineTo(pad + drawW, pad + drawH);
     ctx.stroke();
-    // Middle line
     ctx.beginPath();
     ctx.moveTo(pad, pad + drawH / 2);
     ctx.lineTo(pad + drawW, pad + drawH / 2);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Draw the line
+    // Draw the line as rainbow segments
     const stepX = drawW / (this.maxPoints - 1);
     const offset = this.maxPoints - this.data.length;
 
-    ctx.beginPath();
+    // Calculate all points first
+    const pts = [];
     for (let i = 0; i < this.data.length; i++) {
       const x = pad + (offset + i) * stepX;
       const normalized = (this.data[i] - this.min) / (this.max - this.min);
-      const y = pad + drawH - normalized * drawH; // invert: high value = top
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      const y = pad + drawH - normalized * drawH;
+      pts.push({ x, y });
     }
 
-    ctx.strokeStyle = '#00f0ff';
-    ctx.lineWidth = 1.5;
-    ctx.shadowColor = '#00f0ff';
-    ctx.shadowBlur = 6;
-    ctx.stroke();
+    // Draw each segment with its own hue
+    ctx.lineWidth = 2;
+    for (let i = 1; i < pts.length; i++) {
+      const segHue = (hue + (i / pts.length) * 360) % 360;
+      ctx.beginPath();
+      ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
+      ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.strokeStyle = `hsl(${segHue}, 100%, 60%)`;
+      ctx.shadowColor = `hsla(${segHue}, 100%, 60%, 0.5)`;
+      ctx.shadowBlur = 6;
+      ctx.stroke();
+    }
     ctx.shadowBlur = 0;
 
-    // Fill under the line with gradient
-    const lastX = pad + (offset + this.data.length - 1) * stepX;
-    const lastY = pad + drawH - ((this.data[this.data.length - 1] - this.min) / (this.max - this.min)) * drawH;
-    ctx.lineTo(lastX, pad + drawH);
-    ctx.lineTo(pad + offset * stepX, pad + drawH);
-    ctx.closePath();
+    // Fill under the line with gradient matching current hue
+    if (pts.length > 1) {
+      const lastPt = pts[pts.length - 1];
+      const firstPt = pts[0];
 
-    const gradient = ctx.createLinearGradient(0, 0, 0, h);
-    gradient.addColorStop(0, 'rgba(0, 240, 255, 0.15)');
-    gradient.addColorStop(1, 'rgba(0, 240, 255, 0.01)');
-    ctx.fillStyle = gradient;
-    ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(firstPt.x, firstPt.y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.lineTo(lastPt.x, pad + drawH);
+      ctx.lineTo(firstPt.x, pad + drawH);
+      ctx.closePath();
 
-    // Dot on the latest point
-    ctx.beginPath();
-    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#00f0ff';
-    ctx.shadowColor = '#00f0ff';
-    ctx.shadowBlur = 10;
-    ctx.fill();
-    ctx.shadowBlur = 0;
+      const gradient = ctx.createLinearGradient(0, 0, 0, h);
+      gradient.addColorStop(0, fillTop);
+      gradient.addColorStop(1, fillBot);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      // Dot on the latest point
+      ctx.beginPath();
+      ctx.arc(lastPt.x, lastPt.y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = lineColor;
+      ctx.shadowColor = lineColor;
+      ctx.shadowBlur = 12;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
 
     requestAnimationFrame(() => this._draw());
   }

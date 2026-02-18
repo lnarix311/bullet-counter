@@ -211,9 +211,9 @@ body::before {
 .latency-canvas {
   width: 100%;
   height: 80px;
-  border: 1px solid var(--cyan-glow);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 4px;
-  background: rgba(0, 240, 255, 0.03);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .latency-axis {
