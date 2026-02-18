@@ -1,8 +1,11 @@
 // === Configuration ===
 const CONFIG = {
   startValue: 0,
-  tps: 50,              // transactions per second (mock)
-  milestoneInterval: 100, // trigger effect every N transactions
+  tps: 50,
+  dingInterval: 50,
+  flashInterval: 200,
+  maxLogRows: 8,
+  typewriterSpeed: 5,
 };
 
 // === Data Feed Interface ===
@@ -27,6 +30,22 @@ class MockFeed {
   stop() {
     clearInterval(this.interval);
   }
+}
+
+// === Mock TX Data ===
+function randomHex(len) {
+  const chars = '0123456789abcdef';
+  let s = '0x';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * 16)];
+  return s;
+}
+
+function mockTxData() {
+  return {
+    hash: randomHex(8),
+    from: randomHex(6),
+    to: randomHex(6),
+  };
 }
 
 // === Digit Roller ===
@@ -106,19 +125,82 @@ class DigitRoller {
   }
 }
 
-// === Milestone Detector ===
-class MilestoneDetector {
-  constructor(interval, callback) {
-    this.interval = interval;
-    this.callback = callback;
-    this.lastMilestone = 0;
+// === Transaction Log Manager ===
+class TxLogManager {
+  constructor(container, maxRows, typewriterSpeed) {
+    this.container = container;
+    this.maxRows = maxRows;
+    this.typewriterSpeed = typewriterSpeed;
+    this.rows = [];
   }
 
-  check(value) {
-    const currentMilestone = Math.floor(value / this.interval) * this.interval;
-    if (currentMilestone > this.lastMilestone && currentMilestone > 0) {
-      this.lastMilestone = currentMilestone;
-      this.callback(currentMilestone);
+  addTransaction(tx) {
+    const text = `${tx.hash}  ${tx.from} → ${tx.to}`;
+    const row = document.createElement('div');
+    row.className = 'tx-row';
+
+    this.container.prepend(row);
+    this.rows.unshift(row);
+
+    // Typewriter effect
+    this._typewrite(row, text);
+
+    // Remove excess rows
+    while (this.rows.length > this.maxRows) {
+      const old = this.rows.pop();
+      old.classList.add('fading');
+      setTimeout(() => old.remove(), 500);
+    }
+  }
+
+  _typewrite(row, text) {
+    let i = 0;
+    row.style.opacity = '0.6';
+    row.style.transition = 'none';
+
+    const interval = setInterval(() => {
+      if (i < text.length) {
+        row.textContent = text.slice(0, i + 1);
+        i++;
+      } else {
+        clearInterval(interval);
+        this._styleRow(row, text);
+        row.classList.add('visible');
+      }
+    }, this.typewriterSpeed);
+  }
+
+  _styleRow(row, text) {
+    const parts = text.split('  ');
+    const hash = parts[0];
+    const addrPart = parts[1] || '';
+    const [from, to] = addrPart.split(' → ');
+
+    row.innerHTML = '';
+    row.style.opacity = '';
+    row.style.transition = '';
+
+    const hashSpan = document.createElement('span');
+    hashSpan.className = 'tx-hash';
+    hashSpan.textContent = hash;
+    row.appendChild(hashSpan);
+
+    const spacer = document.createTextNode('  ');
+    row.appendChild(spacer);
+
+    if (from) {
+      const fromSpan = document.createTextNode(from);
+      row.appendChild(fromSpan);
+    }
+
+    const arrow = document.createElement('span');
+    arrow.className = 'tx-arrow';
+    arrow.textContent = '→';
+    row.appendChild(arrow);
+
+    if (to) {
+      const toSpan = document.createTextNode(to);
+      row.appendChild(toSpan);
     }
   }
 }
@@ -136,104 +218,92 @@ class SoundManager {
     this.initialized = true;
   }
 
-  playGlitch() {
+  playDing(loud = false) {
     if (!this.ctx) return;
 
     const now = this.ctx.currentTime;
-    const duration = 0.5;
+    const volume = loud ? 0.35 : 0.15;
+    const duration = loud ? 0.5 : 0.3;
 
-    // Noise buffer
-    const bufferSize = this.ctx.sampleRate * duration;
-    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.15));
-    }
-
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = buffer;
-
-    // Bandpass filter for digital character
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(2000, now);
-    filter.frequency.exponentialRampToValueAtTime(200, now + duration);
-    filter.Q.value = 5;
-
-    // Distortion
-    const distortion = this.ctx.createWaveShaper();
-    const curve = new Float32Array(256);
-    for (let i = 0; i < 256; i++) {
-      const x = (i * 2) / 256 - 1;
-      curve[i] = (Math.PI + 50) * x / (Math.PI + 50 * Math.abs(x));
-    }
-    distortion.curve = curve;
-
-    // Gain envelope
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.3, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-
-    noise.connect(filter);
-    filter.connect(distortion);
-    distortion.connect(gain);
-    gain.connect(this.ctx.destination);
-
-    noise.start(now);
-    noise.stop(now + duration);
-
-    // Sub bass thud
+    // Main bell tone
     const osc = this.ctx.createOscillator();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(80, now);
-    osc.frequency.exponentialRampToValueAtTime(20, now + 0.3);
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(660, now + duration);
 
-    const oscGain = this.ctx.createGain();
-    oscGain.gain.setValueAtTime(0.4, now);
-    oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
-    osc.connect(oscGain);
-    oscGain.connect(this.ctx.destination);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.3);
+    osc.stop(now + duration);
+
+    // Harmonic overtone for brightness
+    const osc2 = this.ctx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1760, now);
+    osc2.frequency.exponentialRampToValueAtTime(1320, now + duration * 0.7);
+
+    const gain2 = this.ctx.createGain();
+    gain2.gain.setValueAtTime(volume * 0.3, now);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + duration * 0.7);
+
+    osc2.connect(gain2);
+    gain2.connect(this.ctx.destination);
+    osc2.start(now);
+    osc2.stop(now + duration * 0.7);
+
+    if (loud) {
+      // Extra shimmer for the big ding
+      const osc3 = this.ctx.createOscillator();
+      osc3.type = 'triangle';
+      osc3.frequency.setValueAtTime(2640, now);
+      osc3.frequency.exponentialRampToValueAtTime(1760, now + 0.3);
+
+      const gain3 = this.ctx.createGain();
+      gain3.gain.setValueAtTime(volume * 0.15, now);
+      gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+      osc3.connect(gain3);
+      gain3.connect(this.ctx.destination);
+      osc3.start(now);
+      osc3.stop(now + 0.3);
+    }
   }
 }
 
 // === App Init ===
 const digitContainer = document.getElementById('digit-container');
 const counterEl = document.getElementById('counter');
+const txLogEl = document.getElementById('tx-log');
 const roller = new DigitRoller(digitContainer);
 const sound = new SoundManager();
+const txLog = new TxLogManager(txLogEl, CONFIG.maxLogRows, CONFIG.typewriterSpeed);
 
 let transactionCount = CONFIG.startValue;
+let lastDing = 0;
+let lastFlash = 0;
 
-const milestone = new MilestoneDetector(CONFIG.milestoneInterval, (value) => {
-  triggerMilestoneEffect(value);
-});
+function checkMilestones(value) {
+  const currentDing = Math.floor(value / CONFIG.dingInterval) * CONFIG.dingInterval;
+  const currentFlash = Math.floor(value / CONFIG.flashInterval) * CONFIG.flashInterval;
 
-function triggerMilestoneEffect(value) {
-  sound.init();
-  sound.playGlitch();
-
-  // Set data attribute for glitch pseudo-elements
-  counterEl.setAttribute('data-value', roller.formatNumber(value));
-
-  // Phase 1: Glitch
-  counterEl.classList.add('glitching');
-
-  // Phase 2: Particle burst (handled by effects.js)
-  if (window.particleBurst) {
-    window.particleBurst();
+  // Check 200th milestone first (includes ding)
+  if (currentFlash > lastFlash && currentFlash > 0) {
+    lastFlash = currentFlash;
+    lastDing = currentDing;
+    sound.playDing(true);
+    if (window.speedLinesBurst) {
+      window.speedLinesBurst();
+    }
   }
-
-  setTimeout(() => {
-    counterEl.classList.remove('glitching');
-    // Phase 3: Bloom
-    counterEl.classList.add('bloom');
-    setTimeout(() => {
-      counterEl.classList.remove('bloom');
-    }, 400);
-  }, 300);
+  // Check 50th milestone (ding only)
+  else if (currentDing > lastDing && currentDing > 0) {
+    lastDing = currentDing;
+    sound.playDing(false);
+  }
 }
 
 // Initialize counter display
@@ -244,7 +314,12 @@ const feed = new MockFeed(CONFIG.tps);
 feed.onTransaction((count) => {
   transactionCount += count;
   roller.update(transactionCount);
-  milestone.check(transactionCount);
+  checkMilestones(transactionCount);
+
+  // Add to transaction log (throttle to ~10 per second for readability)
+  if (transactionCount % 5 === 0) {
+    txLog.addTransaction(mockTxData());
+  }
 });
 
 // Start on overlay click (enables Web Audio)
@@ -257,6 +332,5 @@ if (overlay) {
     setTimeout(() => overlay.remove(), 500);
   });
 } else {
-  // No overlay, auto-start
   setTimeout(() => feed.start(), 500);
 }
