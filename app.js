@@ -208,6 +208,111 @@ class TxLogManager {
   }
 }
 
+// === Chain Race ===
+class ChainRace {
+  constructor(container) {
+    this.container = container;
+    this.lanes = Array.from(container.querySelectorAll('.race-lane'));
+    this.running = false;
+    this.raceDuration = 8000; // max race time in ms (Eth capped here)
+    this.holdDuration = 3500; // hold final state before reset
+    this.chains = [
+      { name: 'bullet', latency: 0.375 },
+      { name: 'solana', latency: 150 },
+      { name: 'arbitrum', latency: 250 },
+      { name: 'eth', latency: 12000 },
+    ];
+  }
+
+  start() {
+    this.running = true;
+    this._startRace();
+  }
+
+  stop() {
+    this.running = false;
+  }
+
+  _startRace() {
+    if (!this.running) return;
+
+    // Reset all dots and labels
+    this.lanes.forEach(lane => {
+      const dot = lane.querySelector('.race-dot');
+      const done = lane.querySelector('.race-done');
+      const ms = lane.querySelector('.race-ms');
+      const trail = lane.querySelector('.race-trail');
+      dot.style.transition = 'none';
+      dot.style.left = '0%';
+      done.classList.remove('visible');
+      ms.classList.remove('highlight');
+      if (trail) {
+        trail.style.transition = 'none';
+        trail.style.width = '0';
+        trail.style.opacity = '0';
+      }
+    });
+
+    // Force reflow
+    void this.container.offsetWidth;
+
+    // Start each chain's animation
+    const maxLatency = Math.min(Math.max(...this.chains.map(c => c.latency)), this.raceDuration);
+
+    this.chains.forEach(chain => {
+      const lane = this.container.querySelector(`[data-chain="${chain.name}"]`);
+      const dot = lane.querySelector('.race-dot');
+      const done = lane.querySelector('.race-done');
+      const ms = lane.querySelector('.race-ms');
+      const trail = lane.querySelector('.race-trail');
+
+      // Scale duration: bullet = ~50ms, eth = raceDuration
+      // Use log scale so the differences are visible but not too extreme
+      let duration;
+      if (chain.latency < 1) {
+        duration = 50; // Bullet: nearly instant
+      } else {
+        // Map latency logarithmically to 0.5s - raceDuration
+        const logMin = Math.log(1);
+        const logMax = Math.log(12000);
+        const logVal = Math.log(chain.latency);
+        const t = (logVal - logMin) / (logMax - logMin);
+        duration = 500 + t * (this.raceDuration - 500);
+      }
+
+      // Animate the dot
+      requestAnimationFrame(() => {
+        dot.style.transition = `left ${duration}ms cubic-bezier(0.25, 0.1, 0.25, 1)`;
+        dot.style.left = '100%';
+
+        // Bullet trail effect
+        if (trail) {
+          trail.style.transition = `width ${duration * 0.8}ms ease-out, opacity ${duration}ms ease-out`;
+          trail.style.width = '100%';
+          trail.style.opacity = '0.6';
+          // Fade trail after arrival
+          setTimeout(() => {
+            trail.style.transition = 'opacity 0.5s ease';
+            trail.style.opacity = '0';
+          }, duration + 100);
+        }
+
+        // Show DONE and highlight ms when finished
+        setTimeout(() => {
+          done.classList.add('visible');
+          ms.classList.add('highlight');
+        }, duration);
+      });
+    });
+
+    // After hold period, restart
+    const totalCycle = this.raceDuration + this.holdDuration;
+    setTimeout(() => {
+      if (this.running) this._startRace();
+    }, totalCycle);
+  }
+}
+
 // === Latency Graph ===
 class LatencyGraph {
   constructor(canvas, valueEl, { min, max, points, updateMs }) {
@@ -493,6 +598,8 @@ const latencyGraph = new LatencyGraph(latencyCanvas, latencyValueEl, {
   points: CONFIG.latencyPoints,
   updateMs: CONFIG.latencyUpdateMs,
 });
+const raceTracksEl = document.getElementById('race-tracks');
+const chainRace = new ChainRace(raceTracksEl);
 
 let transactionCount = CONFIG.startValue;
 let lastFlash = 0;
@@ -532,9 +639,10 @@ if (overlay) {
     sound.init();
     feed.start();
     latencyGraph.start();
+    chainRace.start();
     overlay.classList.add('hidden');
     setTimeout(() => overlay.remove(), 500);
   });
 } else {
-  setTimeout(() => { feed.start(); latencyGraph.start(); }, 500);
+  setTimeout(() => { feed.start(); latencyGraph.start(); chainRace.start(); }, 500);
 }
