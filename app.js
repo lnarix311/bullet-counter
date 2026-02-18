@@ -270,7 +270,7 @@ class ChainRace {
       // Scale duration: bullet = 200ms (visible zip), others log-scaled
       let duration;
       if (chain.latency < 1) {
-        duration = 200; // Bullet: fast enough to see the motion
+        duration = 400; // Bullet: fast zip but clearly visible
       } else {
         const logMin = Math.log(1);
         const logMax = Math.log(12000);
