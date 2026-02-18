@@ -257,8 +257,8 @@ class ChainRace {
     // Force reflow
     void this.container.offsetWidth;
 
-    // Start each chain's animation
-    const maxLatency = Math.min(Math.max(...this.chains.map(c => c.latency)), this.raceDuration);
+    // Calculate durations for all chains
+    let slowestDuration = 0;
 
     this.chains.forEach(chain => {
       const lane = this.container.querySelector(`[data-chain="${chain.name}"]`);
@@ -267,7 +267,7 @@ class ChainRace {
       const ms = lane.querySelector('.race-ms');
       const trail = lane.querySelector('.race-trail');
 
-      // Scale duration: bullet = 200ms (visible zip), others log-scaled
+      // Scale duration: bullet = 400ms (visible zip), others log-scaled
       let duration;
       if (chain.latency < 1) {
         duration = 400; // Bullet: fast zip but clearly visible
@@ -278,6 +278,8 @@ class ChainRace {
         const t = (logVal - logMin) / (logMax - logMin);
         duration = 800 + t * (this.raceDuration - 800);
       }
+
+      if (duration > slowestDuration) slowestDuration = duration;
 
       // Animate the dot
       requestAnimationFrame(() => {
@@ -314,11 +316,10 @@ class ChainRace {
       });
     });
 
-    // After hold period, restart
-    const totalCycle = this.raceDuration + this.holdDuration;
+    // Restart after the slowest chain finishes + hold period
     setTimeout(() => {
       if (this.running) this._startRace();
-    }, totalCycle);
+    }, slowestDuration + this.holdDuration);
   }
 }
 
