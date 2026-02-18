@@ -244,6 +244,7 @@ class ChainRace {
       const trail = lane.querySelector('.race-trail');
       dot.style.transition = 'none';
       dot.style.left = '0%';
+      dot.classList.remove('burst');
       done.classList.remove('visible');
       ms.classList.remove('highlight');
       if (trail) {
@@ -266,41 +267,49 @@ class ChainRace {
       const ms = lane.querySelector('.race-ms');
       const trail = lane.querySelector('.race-trail');
 
-      // Scale duration: bullet = ~50ms, eth = raceDuration
-      // Use log scale so the differences are visible but not too extreme
+      // Scale duration: bullet = 200ms (visible zip), others log-scaled
       let duration;
       if (chain.latency < 1) {
-        duration = 50; // Bullet: nearly instant
+        duration = 200; // Bullet: fast enough to see the motion
       } else {
-        // Map latency logarithmically to 0.5s - raceDuration
         const logMin = Math.log(1);
         const logMax = Math.log(12000);
         const logVal = Math.log(chain.latency);
         const t = (logVal - logMin) / (logMax - logMin);
-        duration = 500 + t * (this.raceDuration - 500);
+        duration = 800 + t * (this.raceDuration - 800);
       }
 
       // Animate the dot
       requestAnimationFrame(() => {
-        dot.style.transition = `left ${duration}ms cubic-bezier(0.25, 0.1, 0.25, 1)`;
+        // Bullet gets an aggressive ease-out (fast start, sharp stop)
+        const easing = chain.latency < 1
+          ? 'cubic-bezier(0.1, 0, 0.2, 1)'
+          : 'cubic-bezier(0.25, 0.1, 0.25, 1)';
+        dot.style.transition = `left ${duration}ms ${easing}`;
         dot.style.left = '100%';
 
-        // Bullet trail effect
+        // Bullet trail: bright streak that lingers
         if (trail) {
-          trail.style.transition = `width ${duration * 0.8}ms ease-out, opacity ${duration}ms ease-out`;
+          trail.style.transition = `width ${duration * 0.6}ms ease-out, opacity ${duration * 0.5}ms ease-out`;
           trail.style.width = '100%';
-          trail.style.opacity = '0.6';
-          // Fade trail after arrival
+          trail.style.opacity = '0.8';
+          // Trail fades slowly after arrival to stay visible
           setTimeout(() => {
-            trail.style.transition = 'opacity 0.5s ease';
+            trail.style.transition = 'opacity 1.5s ease';
             trail.style.opacity = '0';
-          }, duration + 100);
+          }, duration + 300);
         }
 
-        // Show DONE and highlight ms when finished
+        // On finish: show DONE, highlight ms
         setTimeout(() => {
           done.classList.add('visible');
           ms.classList.add('highlight');
+
+          // Bullet gets a finish line burst
+          if (chain.latency < 1) {
+            dot.classList.add('burst');
+            setTimeout(() => dot.classList.remove('burst'), 600);
+          }
         }, duration);
       });
     });

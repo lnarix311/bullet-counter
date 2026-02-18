@@ -318,14 +318,35 @@ body::before {
 /* Trail for bullet */
 .race-trail {
   position: absolute;
-  top: 0;
+  top: -1px;
   left: 0;
-  height: 100%;
+  height: calc(100% + 2px);
   width: 0;
-  background: linear-gradient(90deg, transparent, var(--cyan));
+  background: linear-gradient(90deg, transparent 0%, var(--cyan-dim) 30%, var(--cyan) 100%);
   border-radius: 2px;
   opacity: 0;
   z-index: 1;
+  box-shadow: 0 0 8px var(--cyan-glow);
+}
+
+/* Burst flash when Bullet finishes */
+.race-dot.burst {
+  animation: dotBurst 0.6s ease-out forwards;
+}
+
+@keyframes dotBurst {
+  0% {
+    box-shadow: 0 0 8px var(--cyan), 0 0 20px var(--cyan-glow);
+    transform: translate(-50%, -50%) scale(1);
+  }
+  30% {
+    box-shadow: 0 0 20px var(--cyan), 0 0 40px var(--cyan), 0 0 60px var(--cyan-glow);
+    transform: translate(-50%, -50%) scale(2.5);
+  }
+  100% {
+    box-shadow: 0 0 8px var(--cyan), 0 0 20px var(--cyan-glow);
+    transform: translate(-50%, -50%) scale(1);
+  }
 }
 
 .race-done {
