@@ -210,12 +210,14 @@ class TxLogManager {
 
 // === Chain Race ===
 class ChainRace {
-  constructor(container) {
+  constructor(container, countdownEl) {
     this.container = container;
+    this.countdownEl = countdownEl;
     this.lanes = Array.from(container.querySelectorAll('.race-lane'));
     this.running = false;
     this.raceDuration = 8000; // max race time in ms (Eth capped here)
-    this.holdDuration = 3500; // hold final state before reset
+    this.holdDuration = 3000; // hold final state before countdown starts
+    this.countdownSecs = 3; // 3 second countdown
     this.chains = [
       { name: 'bullet', latency: 0.375 },
       { name: 'solana', latency: 150 },
@@ -226,7 +228,7 @@ class ChainRace {
 
   start() {
     this.running = true;
-    setTimeout(() => this._startRace(), 500);
+    setTimeout(() => this._startRace(), 1000);
   }
 
   stop() {
@@ -235,6 +237,10 @@ class ChainRace {
 
   _startRace() {
     if (!this.running) return;
+
+    // Hide countdown
+    this.countdownEl.classList.remove('visible');
+    this.countdownEl.textContent = '';
 
     // Reset all dots and labels
     this.lanes.forEach(lane => {
@@ -316,10 +322,25 @@ class ChainRace {
       });
     });
 
-    // Restart after the slowest chain finishes + hold period
+    // After slowest finishes: hold, then countdown, then restart
     setTimeout(() => {
-      if (this.running) this._startRace();
+      if (!this.running) return;
+      this._countdown(this.countdownSecs);
     }, slowestDuration + this.holdDuration);
+  }
+
+  _countdown(secs) {
+    if (!this.running || secs <= 0) {
+      this.countdownEl.classList.remove('visible');
+      this.countdownEl.textContent = '';
+      if (this.running) this._startRace();
+      return;
+    }
+
+    this.countdownEl.textContent = `next race in ${secs}...`;
+    this.countdownEl.classList.add('visible');
+
+    setTimeout(() => this._countdown(secs - 1), 1000);
   }
 }
 
@@ -609,7 +630,8 @@ const latencyGraph = new LatencyGraph(latencyCanvas, latencyValueEl, {
   updateMs: CONFIG.latencyUpdateMs,
 });
 const raceTracksEl = document.getElementById('race-tracks');
-const chainRace = new ChainRace(raceTracksEl);
+const raceCountdownEl = document.getElementById('race-countdown');
+const chainRace = new ChainRace(raceTracksEl, raceCountdownEl);
 
 let transactionCount = CONFIG.startValue;
 let lastFlash = 0;

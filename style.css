@@ -247,13 +247,31 @@ body::before {
   gap: 0.5rem;
 }
 
+.race-title-row {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0.8em;
+}
+
 .race-title {
   font-size: clamp(0.55rem, 0.9vw, 0.7rem);
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--white-dim);
-  text-align: center;
   opacity: 0.6;
+}
+
+.race-countdown {
+  font-size: clamp(0.5rem, 0.8vw, 0.65rem);
+  letter-spacing: 0.1em;
+  color: var(--cyan-dim);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.race-countdown.visible {
+  opacity: 1;
 }
 
 .race-tracks {
