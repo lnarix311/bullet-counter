@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bullet - Transaction Counter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="fx-canvas"></canvas>
+  <div class="scanlines"></div>
+
+  <main class="container">
+    <div class="logo-area">
+      <h1 class="logo-text">BULLET</h1>
+    </div>
+
+    <div class="counter-area">
+      <div id="counter" class="counter" aria-live="polite">
+        <span class="digit-group" id="digit-container"></span>
+      </div>
+    </div>
+
+    <div class="tagline-area">
+      <p class="tagline-primary">transactions processed</p>
+      <p class="tagline-secondary">sub-1ms latency</p>
+    </div>
+  </main>
+
+  <script src="effects.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
