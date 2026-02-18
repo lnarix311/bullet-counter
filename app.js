@@ -218,59 +218,132 @@ class SoundManager {
     this.initialized = true;
   }
 
-  playDing(loud = false) {
+  // Cash register ka-ching: metallic click + brief ring
+  playKaChing() {
     if (!this.ctx) return;
-
     const now = this.ctx.currentTime;
-    const volume = loud ? 0.35 : 0.15;
-    const duration = loud ? 0.5 : 0.3;
 
-    // Main bell tone
-    const osc = this.ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, now);
-    osc.frequency.exponentialRampToValueAtTime(660, now + duration);
-
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start(now);
-    osc.stop(now + duration);
-
-    // Harmonic overtone for brightness
-    const osc2 = this.ctx.createOscillator();
-    osc2.type = 'sine';
-    osc2.frequency.setValueAtTime(1760, now);
-    osc2.frequency.exponentialRampToValueAtTime(1320, now + duration * 0.7);
-
-    const gain2 = this.ctx.createGain();
-    gain2.gain.setValueAtTime(volume * 0.3, now);
-    gain2.gain.exponentialRampToValueAtTime(0.001, now + duration * 0.7);
-
-    osc2.connect(gain2);
-    gain2.connect(this.ctx.destination);
-    osc2.start(now);
-    osc2.stop(now + duration * 0.7);
-
-    if (loud) {
-      // Extra shimmer for the big ding
-      const osc3 = this.ctx.createOscillator();
-      osc3.type = 'triangle';
-      osc3.frequency.setValueAtTime(2640, now);
-      osc3.frequency.exponentialRampToValueAtTime(1760, now + 0.3);
-
-      const gain3 = this.ctx.createGain();
-      gain3.gain.setValueAtTime(volume * 0.15, now);
-      gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-
-      osc3.connect(gain3);
-      gain3.connect(this.ctx.destination);
-      osc3.start(now);
-      osc3.stop(now + 0.3);
+    // Part 1: Metallic click (short noise burst through highpass)
+    const clickLen = 0.03;
+    const clickBuf = this.ctx.createBuffer(1, this.ctx.sampleRate * clickLen, this.ctx.sampleRate);
+    const clickData = clickBuf.getChannelData(0);
+    for (let i = 0; i < clickData.length; i++) {
+      clickData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (clickData.length * 0.2));
     }
+    const clickSrc = this.ctx.createBufferSource();
+    clickSrc.buffer = clickBuf;
+
+    const clickHp = this.ctx.createBiquadFilter();
+    clickHp.type = 'highpass';
+    clickHp.frequency.value = 4000;
+
+    const clickGain = this.ctx.createGain();
+    clickGain.gain.setValueAtTime(0.25, now);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, now + clickLen);
+
+    clickSrc.connect(clickHp);
+    clickHp.connect(clickGain);
+    clickGain.connect(this.ctx.destination);
+    clickSrc.start(now);
+    clickSrc.stop(now + clickLen);
+
+    // Part 2: Metallic ring (two detuned sine waves for shimmer)
+    const ringDur = 0.25;
+    const ringStart = now + 0.02;
+
+    const ring1 = this.ctx.createOscillator();
+    ring1.type = 'sine';
+    ring1.frequency.setValueAtTime(3520, ringStart); // A7
+    ring1.frequency.exponentialRampToValueAtTime(2800, ringStart + ringDur);
+
+    const ring1Gain = this.ctx.createGain();
+    ring1Gain.gain.setValueAtTime(0.12, ringStart);
+    ring1Gain.gain.exponentialRampToValueAtTime(0.001, ringStart + ringDur);
+
+    ring1.connect(ring1Gain);
+    ring1Gain.connect(this.ctx.destination);
+    ring1.start(ringStart);
+    ring1.stop(ringStart + ringDur);
+
+    const ring2 = this.ctx.createOscillator();
+    ring2.type = 'sine';
+    ring2.frequency.setValueAtTime(3540, ringStart); // slightly detuned
+    ring2.frequency.exponentialRampToValueAtTime(2820, ringStart + ringDur);
+
+    const ring2Gain = this.ctx.createGain();
+    ring2Gain.gain.setValueAtTime(0.08, ringStart);
+    ring2Gain.gain.exponentialRampToValueAtTime(0.001, ringStart + ringDur);
+
+    ring2.connect(ring2Gain);
+    ring2Gain.connect(this.ctx.destination);
+    ring2.start(ringStart);
+    ring2.stop(ringStart + ringDur);
+  }
+
+  // Jackpot cascade: rapid burst of pitched chimes like a slot machine payout
+  playJackpot() {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    // Play the ka-ching first as the opener
+    this.playKaChing();
+
+    // Then cascade 8 chimes at ascending pitches
+    const baseFreqs = [1760, 2093, 2349, 2637, 2793, 3136, 3520, 3951];
+    const spacing = 0.06; // 60ms between each chime
+
+    baseFreqs.forEach((freq, i) => {
+      const t = now + 0.08 + (i * spacing); // start after the click
+      const dur = 0.2 + (i * 0.02); // later chimes ring slightly longer
+
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.85, t + dur);
+
+      const gain = this.ctx.createGain();
+      const vol = 0.08 + (i * 0.015); // crescendo
+      gain.gain.setValueAtTime(vol, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + dur);
+
+      // Add shimmer overtone on every other chime
+      if (i % 2 === 0) {
+        const shimmer = this.ctx.createOscillator();
+        shimmer.type = 'triangle';
+        shimmer.frequency.setValueAtTime(freq * 2, t);
+        shimmer.frequency.exponentialRampToValueAtTime(freq * 1.5, t + dur * 0.5);
+
+        const shimGain = this.ctx.createGain();
+        shimGain.gain.setValueAtTime(vol * 0.2, t);
+        shimGain.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.5);
+
+        shimmer.connect(shimGain);
+        shimGain.connect(this.ctx.destination);
+        shimmer.start(t);
+        shimmer.stop(t + dur * 0.5);
+      }
+    });
+
+    // Final bright ring to cap it off
+    const finalT = now + 0.08 + (baseFreqs.length * spacing) + 0.05;
+    const finalOsc = this.ctx.createOscillator();
+    finalOsc.type = 'sine';
+    finalOsc.frequency.setValueAtTime(4186, finalT); // C8
+    finalOsc.frequency.exponentialRampToValueAtTime(3520, finalT + 0.4);
+
+    const finalGain = this.ctx.createGain();
+    finalGain.gain.setValueAtTime(0.18, finalT);
+    finalGain.gain.exponentialRampToValueAtTime(0.001, finalT + 0.4);
+
+    finalOsc.connect(finalGain);
+    finalGain.connect(this.ctx.destination);
+    finalOsc.start(finalT);
+    finalOsc.stop(finalT + 0.4);
   }
 }
 
@@ -294,7 +367,7 @@ function checkMilestones(value) {
   if (currentFlash > lastFlash && currentFlash > 0) {
     lastFlash = currentFlash;
     lastDing = currentDing;
-    sound.playDing(true);
+    sound.playJackpot();
     if (window.speedLinesBurst) {
       window.speedLinesBurst();
     }
@@ -302,7 +375,7 @@ function checkMilestones(value) {
   // Check 50th milestone (ding only)
   else if (currentDing > lastDing && currentDing > 0) {
     lastDing = currentDing;
-    sound.playDing(false);
+    sound.playKaChing();
   }
 }
 
