@@ -226,7 +226,7 @@ class ChainRace {
 
   start() {
     this.running = true;
-    this._startRace();
+    setTimeout(() => this._startRace(), 500);
   }
 
   stop() {
