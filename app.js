@@ -238,9 +238,8 @@ class ChainRace {
   _startRace() {
     if (!this.running) return;
 
-    // Hide countdown
-    this.countdownEl.classList.remove('visible');
-    this.countdownEl.textContent = '';
+    // Show racing state
+    this.countdownEl.textContent = 'racing...';
 
     // Reset all dots and labels
     this.lanes.forEach(lane => {
@@ -331,15 +330,11 @@ class ChainRace {
 
   _countdown(secs) {
     if (!this.running || secs <= 0) {
-      this.countdownEl.classList.remove('visible');
-      this.countdownEl.textContent = '';
       if (this.running) this._startRace();
       return;
     }
 
     this.countdownEl.textContent = `next race in ${secs}...`;
-    this.countdownEl.classList.add('visible');
-
     setTimeout(() => this._countdown(secs - 1), 1000);
   }
 }
