@@ -2,10 +2,13 @@
 const CONFIG = {
   startValue: 0,
   tps: 50,
-  dingInterval: 50,
   flashInterval: 200,
   maxLogRows: 8,
   typewriterSpeed: 5,
+  latencyMin: 250,
+  latencyMax: 500,
+  latencyPoints: 100,
+  latencyUpdateMs: 80,
 };
 
 // === Data Feed Interface ===
@@ -205,6 +208,152 @@ class TxLogManager {
   }
 }
 
+// === Latency Graph ===
+class LatencyGraph {
+  constructor(canvas, valueEl, { min, max, points, updateMs }) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.valueEl = valueEl;
+    this.min = min;
+    this.max = max;
+    this.maxPoints = points;
+    this.updateMs = updateMs;
+    this.data = [];
+    this.current = (min + max) / 2;
+    this.target = this.current;
+    this.animId = null;
+    this.running = false;
+
+    this._resize();
+    window.addEventListener('resize', () => this._resize());
+  }
+
+  _resize() {
+    const rect = this.canvas.getBoundingClientRect();
+    this.canvas.width = rect.width * devicePixelRatio;
+    this.canvas.height = rect.height * devicePixelRatio;
+    this.ctx.scale(devicePixelRatio, devicePixelRatio);
+    this.w = rect.width;
+    this.h = rect.height;
+  }
+
+  start() {
+    this.running = true;
+    this._tick();
+    this._draw();
+  }
+
+  stop() {
+    this.running = false;
+  }
+
+  _tick() {
+    if (!this.running) return;
+
+    // Smooth random walk toward target
+    if (Math.random() < 0.15) {
+      this.target = this.min + Math.random() * (this.max - this.min);
+    }
+    this.current += (this.target - this.current) * 0.15;
+    // Add small noise
+    this.current += (Math.random() - 0.5) * 15;
+    this.current = Math.max(this.min, Math.min(this.max, this.current));
+
+    this.data.push(this.current);
+    if (this.data.length > this.maxPoints) {
+      this.data.shift();
+    }
+
+    // Update display value
+    this.valueEl.textContent = `${Math.round(this.current)}μs`;
+
+    setTimeout(() => this._tick(), this.updateMs);
+  }
+
+  _draw() {
+    if (!this.running && this.data.length === 0) return;
+
+    const ctx = this.ctx;
+    const w = this.w;
+    const h = this.h;
+    const pad = 2;
+    const drawH = h - pad * 2;
+    const drawW = w - pad * 2;
+
+    ctx.clearRect(0, 0, w, h);
+
+    if (this.data.length < 2) {
+      requestAnimationFrame(() => this._draw());
+      return;
+    }
+
+    // Draw guide lines (dashed, dim)
+    ctx.strokeStyle = 'rgba(0, 240, 255, 0.1)';
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([4, 4]);
+    // Top line (max)
+    ctx.beginPath();
+    ctx.moveTo(pad, pad);
+    ctx.lineTo(pad + drawW, pad);
+    ctx.stroke();
+    // Bottom line (min)
+    ctx.beginPath();
+    ctx.moveTo(pad, pad + drawH);
+    ctx.lineTo(pad + drawW, pad + drawH);
+    ctx.stroke();
+    // Middle line
+    ctx.beginPath();
+    ctx.moveTo(pad, pad + drawH / 2);
+    ctx.lineTo(pad + drawW, pad + drawH / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw the line
+    const stepX = drawW / (this.maxPoints - 1);
+    const offset = this.maxPoints - this.data.length;
+
+    ctx.beginPath();
+    for (let i = 0; i < this.data.length; i++) {
+      const x = pad + (offset + i) * stepX;
+      const normalized = (this.data[i] - this.min) / (this.max - this.min);
+      const y = pad + drawH - normalized * drawH; // invert: high value = top
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = '#00f0ff';
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Fill under the line with gradient
+    const lastX = pad + (offset + this.data.length - 1) * stepX;
+    const lastY = pad + drawH - ((this.data[this.data.length - 1] - this.min) / (this.max - this.min)) * drawH;
+    ctx.lineTo(lastX, pad + drawH);
+    ctx.lineTo(pad + offset * stepX, pad + drawH);
+    ctx.closePath();
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, h);
+    gradient.addColorStop(0, 'rgba(0, 240, 255, 0.15)');
+    gradient.addColorStop(1, 'rgba(0, 240, 255, 0.01)');
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // Dot on the latest point
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#00f0ff';
+    ctx.shadowColor = '#00f0ff';
+    ctx.shadowBlur = 10;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    requestAnimationFrame(() => this._draw());
+  }
+}
+
 // === Sound Manager ===
 class SoundManager {
   constructor() {
@@ -218,12 +367,12 @@ class SoundManager {
     this.initialized = true;
   }
 
-  // Cash register ka-ching: metallic click + brief ring
-  playKaChing() {
+  // Jackpot cascade: rapid burst of pitched chimes like a slot machine payout
+  playJackpot() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Part 1: Metallic click (short noise burst through highpass)
+    // Metallic click opener
     const clickLen = 0.03;
     const clickBuf = this.ctx.createBuffer(1, this.ctx.sampleRate * clickLen, this.ctx.sampleRate);
     const clickData = clickBuf.getChannelData(0);
@@ -232,61 +381,17 @@ class SoundManager {
     }
     const clickSrc = this.ctx.createBufferSource();
     clickSrc.buffer = clickBuf;
-
     const clickHp = this.ctx.createBiquadFilter();
     clickHp.type = 'highpass';
     clickHp.frequency.value = 4000;
-
     const clickGain = this.ctx.createGain();
     clickGain.gain.setValueAtTime(0.25, now);
     clickGain.gain.exponentialRampToValueAtTime(0.001, now + clickLen);
-
     clickSrc.connect(clickHp);
     clickHp.connect(clickGain);
     clickGain.connect(this.ctx.destination);
     clickSrc.start(now);
     clickSrc.stop(now + clickLen);
-
-    // Part 2: Metallic ring (two detuned sine waves for shimmer)
-    const ringDur = 0.25;
-    const ringStart = now + 0.02;
-
-    const ring1 = this.ctx.createOscillator();
-    ring1.type = 'sine';
-    ring1.frequency.setValueAtTime(3520, ringStart); // A7
-    ring1.frequency.exponentialRampToValueAtTime(2800, ringStart + ringDur);
-
-    const ring1Gain = this.ctx.createGain();
-    ring1Gain.gain.setValueAtTime(0.12, ringStart);
-    ring1Gain.gain.exponentialRampToValueAtTime(0.001, ringStart + ringDur);
-
-    ring1.connect(ring1Gain);
-    ring1Gain.connect(this.ctx.destination);
-    ring1.start(ringStart);
-    ring1.stop(ringStart + ringDur);
-
-    const ring2 = this.ctx.createOscillator();
-    ring2.type = 'sine';
-    ring2.frequency.setValueAtTime(3540, ringStart); // slightly detuned
-    ring2.frequency.exponentialRampToValueAtTime(2820, ringStart + ringDur);
-
-    const ring2Gain = this.ctx.createGain();
-    ring2Gain.gain.setValueAtTime(0.08, ringStart);
-    ring2Gain.gain.exponentialRampToValueAtTime(0.001, ringStart + ringDur);
-
-    ring2.connect(ring2Gain);
-    ring2Gain.connect(this.ctx.destination);
-    ring2.start(ringStart);
-    ring2.stop(ringStart + ringDur);
-  }
-
-  // Jackpot cascade: rapid burst of pitched chimes like a slot machine payout
-  playJackpot() {
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime;
-
-    // Play the ka-ching first as the opener
-    this.playKaChing();
 
     // Then cascade 8 chimes at ascending pitches
     const baseFreqs = [1760, 2093, 2349, 2637, 2793, 3136, 3520, 3951];
@@ -351,31 +456,30 @@ class SoundManager {
 const digitContainer = document.getElementById('digit-container');
 const counterEl = document.getElementById('counter');
 const txLogEl = document.getElementById('tx-log');
+const latencyCanvas = document.getElementById('latency-canvas');
+const latencyValueEl = document.getElementById('latency-value');
 const roller = new DigitRoller(digitContainer);
 const sound = new SoundManager();
 const txLog = new TxLogManager(txLogEl, CONFIG.maxLogRows, CONFIG.typewriterSpeed);
+const latencyGraph = new LatencyGraph(latencyCanvas, latencyValueEl, {
+  min: CONFIG.latencyMin,
+  max: CONFIG.latencyMax,
+  points: CONFIG.latencyPoints,
+  updateMs: CONFIG.latencyUpdateMs,
+});
 
 let transactionCount = CONFIG.startValue;
-let lastDing = 0;
 let lastFlash = 0;
 
 function checkMilestones(value) {
-  const currentDing = Math.floor(value / CONFIG.dingInterval) * CONFIG.dingInterval;
   const currentFlash = Math.floor(value / CONFIG.flashInterval) * CONFIG.flashInterval;
 
-  // Check 200th milestone first (includes ding)
   if (currentFlash > lastFlash && currentFlash > 0) {
     lastFlash = currentFlash;
-    lastDing = currentDing;
     sound.playJackpot();
     if (window.speedLinesBurst) {
       window.speedLinesBurst();
     }
-  }
-  // Check 50th milestone (ding only)
-  else if (currentDing > lastDing && currentDing > 0) {
-    lastDing = currentDing;
-    sound.playKaChing();
   }
 }
 
@@ -401,9 +505,10 @@ if (overlay) {
   overlay.addEventListener('click', () => {
     sound.init();
     feed.start();
+    latencyGraph.start();
     overlay.classList.add('hidden');
     setTimeout(() => overlay.remove(), 500);
   });
 } else {
-  setTimeout(() => feed.start(), 500);
+  setTimeout(() => { feed.start(); latencyGraph.start(); }, 500);
 }
