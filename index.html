@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bullet - Transaction Counter</title>
+  <title>MegaETH - Real-Time Transaction Counter</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -16,29 +16,61 @@
 
   <main class="container">
     <div class="logo-area">
-      <h1 class="logo-text">BULLET</h1>
+      <svg class="logo-icon" width="64" height="64" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M153.018 199.027C160.881 199.027 167.23 192.682 167.23 184.855C167.23 177.028 160.881 170.683 153.018 170.683C145.217 170.683 138.867 177.028 138.867 184.855C138.867 192.682 145.217 199.027 153.018 199.027Z" fill="currentColor"/>
+        <path d="M102.073 199.448C109.935 199.448 116.225 193.103 116.225 185.276C116.225 177.45 109.935 171.105 102.073 171.105C94.2719 171.105 87.9219 177.45 87.9219 185.276C87.9219 193.103 94.2719 199.448 102.073 199.448Z" fill="currentColor"/>
+        <path d="M71.0365 51.3927H104.799C111.152 68.5801 127.731 117.277 128.941 119.991C129.243 118.634 145.943 65.5649 150.662 51.6943H185.756V172.759C181.399 170.346 177.042 167.935 172.323 165.22C169.055 163.563 166.03 161.753 162.703 160.396C162.4 136.877 162.098 113.508 161.372 89.0842C156.652 103.105 140.376 152.557 139.045 153.913H117.323C117.323 153.913 96.2066 93.9085 95.178 91.1949C94.8757 114.262 94.5731 137.329 93.7866 161.15C80.8383 167.783 73.1544 171.553 70.7344 172.457V51.3927H71.0365Z" fill="currentColor"/>
+        <path d="M128.03 20.3533C187.265 20.3533 235.67 68.5983 235.67 128C235.67 187.402 187.447 235.647 128.03 235.647C68.6136 235.647 20.3904 187.402 20.3904 128C20.3904 68.5983 68.6136 20.3533 128.03 20.3533ZM128.03 0C57.2991 0 0 57.2911 0 128C0 198.709 57.2991 256 128.03 256C198.701 256 256 198.709 256 128C256 57.2911 198.701 0 128.03 0Z" fill="currentColor"/>
+      </svg>
+      <h1 class="logo-text">MEGAETH</h1>
+      <p class="logo-subtitle">The First Real-Time Blockchain</p>
     </div>
 
     <div class="counter-area">
       <div id="counter" class="counter" aria-live="polite">
         <span class="digit-group" id="digit-container"></span>
       </div>
+      <div class="live-badge" id="live-badge">
+        <span class="live-dot"></span>
+        <span class="live-text">CONNECTING</span>
+      </div>
     </div>
 
     <div class="tagline-area">
       <p class="tagline-primary">transactions processed</p>
-      <p class="tagline-secondary">sub-1ms latency</p>
+      <p class="tagline-secondary">10ms blocks · 100,000+ TPS</p>
+      <p class="session-counter">
+        <span class="session-value" id="session-counter">0</span>
+        <span class="session-label">tx since you arrived</span>
+      </p>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat-item">
+        <span class="stat-value" id="stat-blocks">--</span>
+        <span class="stat-label">BLOCKS</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <span class="stat-value" id="stat-addresses">--</span>
+        <span class="stat-label">ADDRESSES</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <span class="stat-value" id="stat-tps">--</span>
+        <span class="stat-label">TPS TODAY</span>
+      </div>
     </div>
 
     <div class="latency-graph-area">
       <div class="latency-header">
-        <span class="latency-label">LATENCY</span>
-        <span class="latency-value" id="latency-value">375μs</span>
+        <span class="latency-label">BLOCK TIME</span>
+        <span class="latency-value" id="latency-value">--</span>
       </div>
       <canvas id="latency-canvas" class="latency-canvas"></canvas>
       <div class="latency-axis">
-        <span>500μs</span>
-        <span>250μs</span>
+        <span>15ms</span>
+        <span>5ms</span>
       </div>
     </div>
 
@@ -48,22 +80,50 @@
         <span class="race-countdown" id="race-countdown"></span>
       </div>
       <div id="race-tracks" class="race-tracks">
-        <div class="race-lane" data-chain="bullet" data-latency="0.375">
-          <span class="race-name">BULLET</span>
+        <div class="race-lane" data-chain="megaeth" data-latency="10">
+          <span class="race-name">MEGAETH</span>
           <div class="race-track">
             <div class="race-dot"></div>
             <div class="race-trail"></div>
             <span class="race-done">DONE</span>
           </div>
-          <span class="race-ms">0.375ms</span>
+          <span class="race-ms">10ms</span>
+          <!-- Fluffey silhouette -->
+          <svg class="race-rabbit" id="race-rabbit" viewBox="0 0 60 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Left ear -->
+            <path d="M18 38C18 38 14 18 16 8C17 2 19 0 21 0C23 0 25 3 25 7C25 16 24 32 24 38Z" fill="currentColor"/>
+            <!-- Right ear -->
+            <path d="M36 38C36 38 36 18 38 8C39 2 41 0 43 0C45 0 46 3 45 7C44 16 42 32 42 38Z" fill="currentColor"/>
+            <!-- Head -->
+            <ellipse cx="30" cy="44" rx="18" ry="16" fill="currentColor"/>
+            <!-- Cheek fluff -->
+            <path d="M12 44C10 42 10 48 13 50C15 51 14 46 12 44Z" fill="currentColor"/>
+            <path d="M48 44C50 42 50 48 47 50C45 51 46 46 48 44Z" fill="currentColor"/>
+            <!-- Body -->
+            <path d="M20 58C18 58 16 62 16 68C16 74 18 78 22 80H38C42 78 44 74 44 68C44 62 42 58 40 58Z" fill="currentColor"/>
+            <!-- Left leg -->
+            <path d="M22 79L21 91C21 93 22 94 24 94H27C28 94 28 93 28 91L27 79Z" fill="currentColor"/>
+            <!-- Right leg -->
+            <path d="M33 79L33 91C33 93 34 94 36 94H39C40 94 40 93 40 91L39 79Z" fill="currentColor"/>
+            <!-- Left arm -->
+            <path d="M17 62C14 63 13 66 14 68C14 69 16 70 17 69L20 65Z" fill="currentColor"/>
+            <!-- Right arm -->
+            <path d="M43 62C46 63 47 66 46 68C46 69 44 70 43 69L40 65Z" fill="currentColor"/>
+            <!-- Eyes (cutout) -->
+            <ellipse cx="22" cy="43" rx="4" ry="4.5" fill="#19191A"/>
+            <ellipse cx="38" cy="43" rx="4" ry="4.5" fill="#19191A"/>
+            <!-- Eye highlights -->
+            <circle cx="24" cy="41.5" r="1.5" fill="currentColor" opacity="0.5"/>
+            <circle cx="40" cy="41.5" r="1.5" fill="currentColor" opacity="0.5"/>
+          </svg>
         </div>
-        <div class="race-lane" data-chain="solana" data-latency="150">
+        <div class="race-lane" data-chain="solana" data-latency="400">
           <span class="race-name">SOLANA</span>
           <div class="race-track">
             <div class="race-dot"></div>
             <span class="race-done">DONE</span>
           </div>
-          <span class="race-ms">150ms</span>
+          <span class="race-ms">400ms</span>
         </div>
         <div class="race-lane" data-chain="arbitrum" data-latency="250">
           <span class="race-name">ARBITRUM</span>
@@ -85,11 +145,21 @@
     </div>
 
     <div class="tx-log-area">
+      <div class="tx-log-header">
+        <span class="tx-log-title">LIVE TRANSACTIONS</span>
+        <a class="tx-log-link" href="https://megaeth.blockscout.com" target="_blank" rel="noopener">View Explorer</a>
+      </div>
       <div id="tx-log" class="tx-log"></div>
     </div>
   </main>
 
   <div id="start-overlay" class="start-overlay">
+    <svg class="overlay-logo" width="80" height="80" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M153.018 199.027C160.881 199.027 167.23 192.682 167.23 184.855C167.23 177.028 160.881 170.683 153.018 170.683C145.217 170.683 138.867 177.028 138.867 184.855C138.867 192.682 145.217 199.027 153.018 199.027Z" fill="currentColor"/>
+      <path d="M102.073 199.448C109.935 199.448 116.225 193.103 116.225 185.276C116.225 177.45 109.935 171.105 102.073 171.105C94.2719 171.105 87.9219 177.45 87.9219 185.276C87.9219 193.103 94.2719 199.448 102.073 199.448Z" fill="currentColor"/>
+      <path d="M71.0365 51.3927H104.799C111.152 68.5801 127.731 117.277 128.941 119.991C129.243 118.634 145.943 65.5649 150.662 51.6943H185.756V172.759C181.399 170.346 177.042 167.935 172.323 165.22C169.055 163.563 166.03 161.753 162.703 160.396C162.4 136.877 162.098 113.508 161.372 89.0842C156.652 103.105 140.376 152.557 139.045 153.913H117.323C117.323 153.913 96.2066 93.9085 95.178 91.1949C94.8757 114.262 94.5731 137.329 93.7866 161.15C80.8383 167.783 73.1544 171.553 70.7344 172.457V51.3927H71.0365Z" fill="currentColor"/>
+      <path d="M128.03 20.3533C187.265 20.3533 235.67 68.5983 235.67 128C235.67 187.402 187.447 235.647 128.03 235.647C68.6136 235.647 20.3904 187.402 20.3904 128C20.3904 68.5983 68.6136 20.3533 128.03 20.3533ZM128.03 0C57.2991 0 0 57.2911 0 128C0 198.709 57.2991 256 128.03 256C198.701 256 256 198.709 256 128C256 57.2911 198.701 0 128.03 0Z" fill="currentColor"/>
+    </svg>
     <p class="start-text">CLICK TO INITIALIZE</p>
   </div>
 

@@ -1,41 +1,288 @@
 // === Configuration ===
 const CONFIG = {
-  startValue: 0,
-  tps: 50,
-  flashInterval: 200,
+  flashInterval: 250,
   maxLogRows: 8,
   typewriterSpeed: 5,
-  latencyMin: 250,
-  latencyMax: 500,
+  latencyMin: 5,
+  latencyMax: 15,
   latencyPoints: 100,
   latencyUpdateMs: 80,
+  rpcUrl: 'https://mainnet.megaeth.com/rpc',
+  blockscoutApi: 'https://megaeth.blockscout.com/api/v2',
+  blockscoutUrl: 'https://megaeth.blockscout.com',
+  wsUrl: 'wss://megaeth.drpc.org',
+  pollIntervalMs: 2000,
+  statsPollMs: 10000,
 };
 
-// === Data Feed Interface ===
+// === Live Data Feed ===
+class LiveFeed {
+  constructor() {
+    this.ws = null;
+    this.onTxCount = null;
+    this.onNewTx = null;
+    this.onBlockTime = null;
+    this.onStats = null;
+    this.totalTx = 0;
+    this.lastBlockNumber = null;
+    this.lastBlockTimestamp = null;
+    this.connected = false;
+    this.pollTimer = null;
+    this.statsPollTimer = null;
+  }
+
+  async init() {
+    // Fetch initial stats from Blockscout
+    try {
+      const res = await fetch(`${CONFIG.blockscoutApi}/stats`);
+      const data = await res.json();
+      this.totalTx = parseInt(data.total_transactions) || 0;
+
+      if (this.onStats) {
+        this.onStats({
+          totalBlocks: data.total_blocks,
+          totalAddresses: data.total_addresses,
+          txToday: data.transactions_today,
+        });
+      }
+    } catch (e) {
+      console.warn('Blockscout stats fetch failed, using fallback:', e);
+      this.totalTx = 0;
+    }
+
+    return this.totalTx;
+  }
+
+  start() {
+    this._connectWs();
+    this._pollStats();
+  }
+
+  stop() {
+    if (this.ws) this.ws.close();
+    clearInterval(this.pollTimer);
+    clearInterval(this.statsPollTimer);
+  }
+
+  _connectWs() {
+    try {
+      this.ws = new WebSocket(CONFIG.wsUrl);
+
+      this.ws.onopen = () => {
+        // Subscribe to new block headers
+        this.ws.send(JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_subscribe',
+          params: ['newHeads'],
+          id: 1,
+        }));
+        this.connected = true;
+        this._updateBadge(true);
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.params && data.params.result) {
+            this._handleNewHead(data.params.result);
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+      };
+
+      this.ws.onerror = () => {
+        console.warn('WebSocket error, falling back to polling');
+        this._fallbackToPolling();
+      };
+
+      this.ws.onclose = () => {
+        this.connected = false;
+        this._updateBadge(false);
+        // Reconnect after 5s
+        setTimeout(() => {
+          if (!this.pollTimer) this._connectWs();
+        }, 5000);
+      };
+    } catch (e) {
+      this._fallbackToPolling();
+    }
+  }
+
+  _fallbackToPolling() {
+    if (this.pollTimer) return;
+    this._updateBadge(true);
+    this.pollTimer = setInterval(() => this._pollLatestBlock(), CONFIG.pollIntervalMs);
+    this._pollLatestBlock();
+  }
+
+  async _pollLatestBlock() {
+    try {
+      const res = await fetch(CONFIG.rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_getBlockByNumber',
+          params: ['latest', true],
+          id: 1,
+        }),
+      });
+      const data = await res.json();
+      if (data.result) {
+        this._processBlock(data.result);
+      }
+    } catch (e) {
+      // silent fail, will retry on next poll
+    }
+  }
+
+  _handleNewHead(head) {
+    // Fetch full block with transactions
+    const blockNum = head.number;
+    fetch(CONFIG.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_getBlockByNumber',
+        params: [blockNum, true],
+        id: 2,
+      }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.result) this._processBlock(data.result);
+      })
+      .catch(() => {});
+  }
+
+  _processBlock(block) {
+    const blockNum = parseInt(block.number, 16);
+    const timestamp = parseInt(block.timestamp, 16);
+    const txCount = block.transactions ? block.transactions.length : 0;
+
+    // Skip if we already processed this block
+    if (this.lastBlockNumber && blockNum <= this.lastBlockNumber) return;
+
+    // Calculate block time
+    if (this.lastBlockTimestamp && this.onBlockTime) {
+      const blockTimeMs = (timestamp - this.lastBlockTimestamp) * 1000;
+      if (blockTimeMs > 0 && blockTimeMs < 30000) {
+        this.onBlockTime(blockTimeMs);
+      }
+    }
+
+    this.lastBlockNumber = blockNum;
+    this.lastBlockTimestamp = timestamp;
+
+    // Increment counter
+    if (txCount > 0) {
+      this.totalTx += txCount;
+      if (this.onTxCount) this.onTxCount(this.totalTx);
+    }
+
+    // Feed real transactions to log
+    if (block.transactions && this.onNewTx) {
+      // Show up to 3 transactions per block for readability
+      const txs = block.transactions.slice(0, 3);
+      txs.forEach(tx => {
+        if (typeof tx === 'object') {
+          this.onNewTx({
+            hash: tx.hash,
+            from: tx.from,
+            to: tx.to || '(contract)',
+          });
+        }
+      });
+    }
+  }
+
+  async _pollStats() {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${CONFIG.blockscoutApi}/stats`);
+        const data = await res.json();
+        const newTotal = parseInt(data.total_transactions) || 0;
+
+        // Sync counter if Blockscout total is ahead
+        if (newTotal > this.totalTx) {
+          this.totalTx = newTotal;
+          if (this.onTxCount) this.onTxCount(this.totalTx);
+        }
+
+        if (this.onStats) {
+          this.onStats({
+            totalBlocks: data.total_blocks,
+            totalAddresses: data.total_addresses,
+            txToday: data.transactions_today,
+          });
+        }
+      } catch (e) {
+        // silent fail
+      }
+    };
+
+    this.statsPollTimer = setInterval(poll, CONFIG.statsPollMs);
+  }
+
+  _updateBadge(connected) {
+    const badge = document.getElementById('live-badge');
+    const text = badge?.querySelector('.live-text');
+    if (badge && text) {
+      if (connected) {
+        badge.classList.add('connected');
+        text.textContent = 'LIVE';
+      } else {
+        badge.classList.remove('connected');
+        text.textContent = 'CONNECTING';
+      }
+    }
+  }
+}
+
+// === Mock Feed (fallback if all real connections fail) ===
 class MockFeed {
   constructor(tps) {
     this.tps = tps;
-    this.callback = null;
+    this.onTxCount = null;
+    this.onNewTx = null;
     this.interval = null;
+    this.totalTx = 0;
   }
 
-  onTransaction(callback) {
-    this.callback = callback;
+  async init() {
+    this.totalTx = 277000000 + Math.floor(Math.random() * 1000000);
+    return this.totalTx;
   }
 
   start() {
     const msPerTx = 1000 / this.tps;
     this.interval = setInterval(() => {
-      if (this.callback) this.callback(1);
+      this.totalTx += 1;
+      if (this.onTxCount) this.onTxCount(this.totalTx);
+      if (this.totalTx % 5 === 0 && this.onNewTx) {
+        this.onNewTx(mockTxData());
+      }
     }, msPerTx);
   }
 
-  stop() {
-    clearInterval(this.interval);
-  }
+  stop() { clearInterval(this.interval); }
+  _updateBadge() {}
 }
 
-// === Mock TX Data ===
+// === Helper: shorten hex addresses ===
+function shortAddr(addr) {
+  if (!addr || addr.length < 10) return addr || '??';
+  return addr.slice(0, 6) + '..' + addr.slice(-4);
+}
+
+function shortHash(hash) {
+  if (!hash || hash.length < 10) return hash || '??';
+  return hash.slice(0, 10);
+}
+
+// === Mock TX Data (fallback) ===
 function randomHex(len) {
   const chars = '0123456789abcdef';
   let s = '0x';
@@ -44,11 +291,16 @@ function randomHex(len) {
 }
 
 function mockTxData() {
-  return {
-    hash: randomHex(8),
-    from: randomHex(6),
-    to: randomHex(6),
-  };
+  return { hash: randomHex(32), from: randomHex(20), to: randomHex(20) };
+}
+
+// === Format large numbers ===
+function formatCompact(n) {
+  if (typeof n === 'string') n = parseInt(n);
+  if (isNaN(n)) return '--';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return n.toLocaleString();
 }
 
 // === Digit Roller ===
@@ -65,18 +317,18 @@ class DigitRoller {
 
   update(value) {
     const formatted = this.formatNumber(value);
-
     if (formatted.length !== this.currentFormatted.length) {
       this._rebuild(formatted);
     } else {
       this._roll(formatted);
     }
-
     this.currentFormatted = formatted;
   }
 
   _rebuild(formatted) {
-    this.container.innerHTML = '';
+    while (this.container.firstChild) {
+      this.container.removeChild(this.container.firstChild);
+    }
     this.slots = [];
 
     for (const char of formatted) {
@@ -89,22 +341,17 @@ class DigitRoller {
       } else {
         const slot = document.createElement('span');
         slot.className = 'digit-slot';
-
         const roll = document.createElement('span');
         roll.className = 'digit-roll';
-
         for (let i = 0; i <= 9; i++) {
           const span = document.createElement('span');
           span.textContent = i;
           roll.appendChild(span);
         }
-
         slot.appendChild(roll);
         this.container.appendChild(slot);
-
         const digit = parseInt(char);
         roll.style.transform = `translateY(-${digit * (100 / 10)}%)`;
-
         this.slots.push({ type: 'digit', el: slot, roll, value: digit });
       }
     }
@@ -114,9 +361,7 @@ class DigitRoller {
     let slotIdx = 0;
     for (const char of formatted) {
       const slot = this.slots[slotIdx];
-      if (char === ',') {
-        // skip comma slots
-      } else if (slot && slot.type === 'digit') {
+      if (char !== ',' && slot && slot.type === 'digit') {
         const digit = parseInt(char);
         if (digit !== slot.value) {
           slot.roll.style.transform = `translateY(-${digit * (100 / 10)}%)`;
@@ -138,17 +383,18 @@ class TxLogManager {
   }
 
   addTransaction(tx) {
-    const text = `${tx.hash}  ${tx.from} → ${tx.to}`;
+    const hash = shortHash(tx.hash);
+    const from = shortAddr(tx.from);
+    const to = shortAddr(tx.to);
+    const text = `${hash}  ${from} → ${to}`;
     const row = document.createElement('div');
     row.className = 'tx-row';
 
     this.container.prepend(row);
     this.rows.unshift(row);
 
-    // Typewriter effect
-    this._typewrite(row, text);
+    this._typewrite(row, text, tx);
 
-    // Remove excess rows
     while (this.rows.length > this.maxRows) {
       const old = this.rows.pop();
       old.classList.add('fading');
@@ -156,7 +402,7 @@ class TxLogManager {
     }
   }
 
-  _typewrite(row, text) {
+  _typewrite(row, text, tx) {
     let i = 0;
     row.style.opacity = '0.6';
     row.style.transition = 'none';
@@ -167,44 +413,43 @@ class TxLogManager {
         i++;
       } else {
         clearInterval(interval);
-        this._styleRow(row, text);
+        this._styleRow(row, tx);
         row.classList.add('visible');
       }
     }, this.typewriterSpeed);
   }
 
-  _styleRow(row, text) {
-    const parts = text.split('  ');
-    const hash = parts[0];
-    const addrPart = parts[1] || '';
-    const [from, to] = addrPart.split(' → ');
-
-    row.innerHTML = '';
+  _styleRow(row, tx) {
+    while (row.firstChild) {
+      row.removeChild(row.firstChild);
+    }
     row.style.opacity = '';
     row.style.transition = '';
 
-    const hashSpan = document.createElement('span');
-    hashSpan.className = 'tx-hash';
-    hashSpan.textContent = hash;
-    row.appendChild(hashSpan);
+    const hashLink = document.createElement('a');
+    hashLink.className = 'tx-hash';
+    hashLink.textContent = shortHash(tx.hash);
+    hashLink.href = `${CONFIG.blockscoutUrl}/tx/${tx.hash}`;
+    hashLink.target = '_blank';
+    hashLink.rel = 'noopener';
+    row.appendChild(hashLink);
 
-    const spacer = document.createTextNode('  ');
-    row.appendChild(spacer);
+    row.appendChild(document.createTextNode('  '));
 
-    if (from) {
-      const fromSpan = document.createTextNode(from);
-      row.appendChild(fromSpan);
-    }
+    const fromSpan = document.createElement('span');
+    fromSpan.className = 'tx-from';
+    fromSpan.textContent = shortAddr(tx.from);
+    row.appendChild(fromSpan);
 
     const arrow = document.createElement('span');
     arrow.className = 'tx-arrow';
     arrow.textContent = '→';
     row.appendChild(arrow);
 
-    if (to) {
-      const toSpan = document.createTextNode(to);
-      row.appendChild(toSpan);
-    }
+    const toSpan = document.createElement('span');
+    toSpan.className = 'tx-to';
+    toSpan.textContent = shortAddr(tx.to);
+    row.appendChild(toSpan);
   }
 }
 
@@ -215,12 +460,12 @@ class ChainRace {
     this.countdownEl = countdownEl;
     this.lanes = Array.from(container.querySelectorAll('.race-lane'));
     this.running = false;
-    this.raceDuration = 8000; // max race time in ms (Eth capped here)
-    this.holdDuration = 3000; // hold final state before countdown starts
-    this.countdownSecs = 3; // 3 second countdown
+    this.raceDuration = 8000;
+    this.holdDuration = 3000;
+    this.countdownSecs = 3;
     this.chains = [
-      { name: 'bullet', latency: 0.375 },
-      { name: 'solana', latency: 150 },
+      { name: 'megaeth', latency: 10 },
+      { name: 'solana', latency: 400 },
       { name: 'arbitrum', latency: 250 },
       { name: 'eth', latency: 12000 },
     ];
@@ -231,17 +476,19 @@ class ChainRace {
     setTimeout(() => this._startRace(), 1000);
   }
 
-  stop() {
-    this.running = false;
-  }
+  stop() { this.running = false; }
 
   _startRace() {
     if (!this.running) return;
-
-    // Show racing state
     this.countdownEl.textContent = 'racing...';
 
-    // Reset all dots and labels
+    // Reset rabbit
+    const rabbit = document.getElementById('race-rabbit');
+    if (rabbit) {
+      rabbit.classList.remove('arrived', 'look-back', 'idle');
+      rabbit.style.opacity = '0';
+    }
+
     this.lanes.forEach(lane => {
       const dot = lane.querySelector('.race-dot');
       const done = lane.querySelector('.race-done');
@@ -259,10 +506,7 @@ class ChainRace {
       }
     });
 
-    // Force reflow
     void this.container.offsetWidth;
-
-    // Calculate durations for all chains
     let slowestDuration = 0;
 
     this.chains.forEach(chain => {
@@ -272,12 +516,11 @@ class ChainRace {
       const ms = lane.querySelector('.race-ms');
       const trail = lane.querySelector('.race-trail');
 
-      // Scale duration: bullet = 400ms (visible zip), others log-scaled
       let duration;
-      if (chain.latency < 1) {
-        duration = 400; // Bullet: fast zip but clearly visible
+      if (chain.latency <= 10) {
+        duration = 400;
       } else {
-        const logMin = Math.log(1);
+        const logMin = Math.log(10);
         const logMax = Math.log(12000);
         const logVal = Math.log(chain.latency);
         const t = (logVal - logMin) / (logMax - logMin);
@@ -286,42 +529,53 @@ class ChainRace {
 
       if (duration > slowestDuration) slowestDuration = duration;
 
-      // Animate the dot
       requestAnimationFrame(() => {
-        // Bullet gets an aggressive ease-out (fast start, sharp stop)
-        const easing = chain.latency < 1
+        const easing = chain.latency <= 10
           ? 'cubic-bezier(0.1, 0, 0.2, 1)'
           : 'cubic-bezier(0.25, 0.1, 0.25, 1)';
         dot.style.transition = `left ${duration}ms ${easing}`;
         dot.style.left = '100%';
 
-        // Bullet trail: bright streak that lingers
         if (trail) {
           trail.style.transition = `width ${duration * 0.6}ms ease-out, opacity ${duration * 0.5}ms ease-out`;
           trail.style.width = '100%';
           trail.style.opacity = '0.8';
-          // Trail fades slowly after arrival to stay visible
           setTimeout(() => {
             trail.style.transition = 'opacity 1.5s ease';
             trail.style.opacity = '0';
           }, duration + 300);
         }
 
-        // On finish: show DONE, highlight ms
         setTimeout(() => {
           done.classList.add('visible');
           ms.classList.add('highlight');
-
-          // Bullet gets a finish line burst
-          if (chain.latency < 1) {
+          if (chain.latency <= 10) {
             dot.classList.add('burst');
             setTimeout(() => dot.classList.remove('burst'), 600);
+
+            // Rabbit animation: arrive, then look back at slower chains
+            const rabbit = document.getElementById('race-rabbit');
+            if (rabbit) {
+              rabbit.style.opacity = '1';
+              rabbit.classList.add('arrived');
+
+              // After arriving, look back at the others
+              setTimeout(() => {
+                rabbit.classList.remove('arrived');
+                rabbit.classList.add('look-back');
+
+                // Then idle bob while waiting
+                setTimeout(() => {
+                  rabbit.classList.remove('look-back');
+                  rabbit.classList.add('idle');
+                }, 600);
+              }, 500);
+            }
           }
         }, duration);
       });
     });
 
-    // After slowest finishes: hold, then countdown, then restart
     setTimeout(() => {
       if (!this.running) return;
       this._countdown(this.countdownSecs);
@@ -333,7 +587,6 @@ class ChainRace {
       if (this.running) this._startRace();
       return;
     }
-
     this.countdownEl.textContent = `next race in ${secs}...`;
     setTimeout(() => this._countdown(secs - 1), 1000);
   }
@@ -352,9 +605,8 @@ class LatencyGraph {
     this.data = [];
     this.current = (min + max) / 2;
     this.target = this.current;
-    this.animId = null;
     this.running = false;
-    this.hue = 180; // start at cyan
+    this.hue = 340;
 
     this._resize();
     window.addEventListener('resize', () => this._resize());
@@ -375,30 +627,29 @@ class LatencyGraph {
     this._draw();
   }
 
-  stop() {
-    this.running = false;
+  stop() { this.running = false; }
+
+  // Push a real block time measurement
+  pushReal(ms) {
+    const clamped = Math.max(this.min, Math.min(this.max, ms));
+    this.current = clamped;
+    this.target = clamped;
   }
 
   _tick() {
     if (!this.running) return;
 
-    // Smooth random walk toward target
     if (Math.random() < 0.15) {
       this.target = this.min + Math.random() * (this.max - this.min);
     }
     this.current += (this.target - this.current) * 0.15;
-    // Add small noise
-    this.current += (Math.random() - 0.5) * 15;
+    this.current += (Math.random() - 0.5) * 0.8;
     this.current = Math.max(this.min, Math.min(this.max, this.current));
 
     this.data.push(this.current);
-    if (this.data.length > this.maxPoints) {
-      this.data.shift();
-    }
+    if (this.data.length > this.maxPoints) this.data.shift();
 
-    // Update display value
-    this.valueEl.textContent = `${Math.round(this.current)}μs`;
-
+    this.valueEl.textContent = `${this.current.toFixed(1)}ms`;
     setTimeout(() => this._tick(), this.updateMs);
   }
 
@@ -419,42 +670,32 @@ class LatencyGraph {
       return;
     }
 
-    // Advance hue (~1 degree per frame for smooth rainbow cycling)
-    this.hue = (this.hue + 0.8) % 360;
+    // Cycle through MegaETH brand hues
+    this.hue = (this.hue + 0.5) % 360;
     const hue = this.hue;
-    const lineColor = `hsl(${hue}, 100%, 60%)`;
-    const glowColor = `hsla(${hue}, 100%, 60%, 0.6)`;
-    const fillTop = `hsla(${hue}, 100%, 60%, 0.15)`;
-    const fillBot = `hsla(${hue}, 100%, 60%, 0.01)`;
-    const guideColor = `hsla(${hue}, 100%, 60%, 0.1)`;
+    const lineColor = `hsl(${hue}, 80%, 70%)`;
+    const glowColor = `hsla(${hue}, 80%, 70%, 0.6)`;
+    const fillTop = `hsla(${hue}, 80%, 70%, 0.15)`;
+    const fillBot = `hsla(${hue}, 80%, 70%, 0.01)`;
+    const guideColor = `hsla(${hue}, 80%, 70%, 0.1)`;
 
-    // Update the value readout color to match
     this.valueEl.style.color = lineColor;
     this.valueEl.style.textShadow = `0 0 8px ${glowColor}`;
 
-    // Draw guide lines (dashed, dim)
     ctx.strokeStyle = guideColor;
     ctx.lineWidth = 0.5;
     ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(pad, pad);
-    ctx.lineTo(pad + drawW, pad);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(pad, pad + drawH);
-    ctx.lineTo(pad + drawW, pad + drawH);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(pad, pad + drawH / 2);
-    ctx.lineTo(pad + drawW, pad + drawH / 2);
-    ctx.stroke();
+    [0, 0.5, 1].forEach(frac => {
+      ctx.beginPath();
+      ctx.moveTo(pad, pad + drawH * frac);
+      ctx.lineTo(pad + drawW, pad + drawH * frac);
+      ctx.stroke();
+    });
     ctx.setLineDash([]);
 
-    // Draw the line as rainbow segments
     const stepX = drawW / (this.maxPoints - 1);
     const offset = this.maxPoints - this.data.length;
 
-    // Calculate all points first
     const pts = [];
     for (let i = 0; i < this.data.length; i++) {
       const x = pad + (offset + i) * stepX;
@@ -463,30 +704,26 @@ class LatencyGraph {
       pts.push({ x, y });
     }
 
-    // Draw each segment with its own hue
     ctx.lineWidth = 2;
     for (let i = 1; i < pts.length; i++) {
       const segHue = (hue + (i / pts.length) * 360) % 360;
       ctx.beginPath();
       ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
       ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.strokeStyle = `hsl(${segHue}, 100%, 60%)`;
-      ctx.shadowColor = `hsla(${segHue}, 100%, 60%, 0.5)`;
+      ctx.strokeStyle = `hsl(${segHue}, 80%, 70%)`;
+      ctx.shadowColor = `hsla(${segHue}, 80%, 70%, 0.5)`;
       ctx.shadowBlur = 6;
       ctx.stroke();
     }
     ctx.shadowBlur = 0;
 
-    // Fill under the line with gradient matching current hue
     if (pts.length > 1) {
       const lastPt = pts[pts.length - 1];
       const firstPt = pts[0];
 
       ctx.beginPath();
       ctx.moveTo(firstPt.x, firstPt.y);
-      for (let i = 1; i < pts.length; i++) {
-        ctx.lineTo(pts[i].x, pts[i].y);
-      }
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.lineTo(lastPt.x, pad + drawH);
       ctx.lineTo(firstPt.x, pad + drawH);
       ctx.closePath();
@@ -497,7 +734,6 @@ class LatencyGraph {
       ctx.fillStyle = gradient;
       ctx.fill();
 
-      // Dot on the latest point
       ctx.beginPath();
       ctx.arc(lastPt.x, lastPt.y, 3, 0, Math.PI * 2);
       ctx.fillStyle = lineColor;
@@ -524,12 +760,10 @@ class SoundManager {
     this.initialized = true;
   }
 
-  // Jackpot cascade: rapid burst of pitched chimes like a slot machine payout
   playJackpot() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Metallic click opener
     const clickLen = 0.03;
     const clickBuf = this.ctx.createBuffer(1, this.ctx.sampleRate * clickLen, this.ctx.sampleRate);
     const clickData = clickBuf.getChannelData(0);
@@ -550,13 +784,12 @@ class SoundManager {
     clickSrc.start(now);
     clickSrc.stop(now + clickLen);
 
-    // Then cascade 8 chimes at ascending pitches
     const baseFreqs = [1760, 2093, 2349, 2637, 2793, 3136, 3520, 3951];
-    const spacing = 0.06; // 60ms between each chime
+    const spacing = 0.06;
 
     baseFreqs.forEach((freq, i) => {
-      const t = now + 0.08 + (i * spacing); // start after the click
-      const dur = 0.2 + (i * 0.02); // later chimes ring slightly longer
+      const t = now + 0.08 + (i * spacing);
+      const dur = 0.2 + (i * 0.02);
 
       const osc = this.ctx.createOscillator();
       osc.type = 'sine';
@@ -564,7 +797,7 @@ class SoundManager {
       osc.frequency.exponentialRampToValueAtTime(freq * 0.85, t + dur);
 
       const gain = this.ctx.createGain();
-      const vol = 0.08 + (i * 0.015); // crescendo
+      const vol = 0.08 + (i * 0.015);
       gain.gain.setValueAtTime(vol, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
 
@@ -573,7 +806,6 @@ class SoundManager {
       osc.start(t);
       osc.stop(t + dur);
 
-      // Add shimmer overtone on every other chime
       if (i % 2 === 0) {
         const shimmer = this.ctx.createOscillator();
         shimmer.type = 'triangle';
@@ -591,11 +823,10 @@ class SoundManager {
       }
     });
 
-    // Final bright ring to cap it off
     const finalT = now + 0.08 + (baseFreqs.length * spacing) + 0.05;
     const finalOsc = this.ctx.createOscillator();
     finalOsc.type = 'sine';
-    finalOsc.frequency.setValueAtTime(4186, finalT); // C8
+    finalOsc.frequency.setValueAtTime(4186, finalT);
     finalOsc.frequency.exponentialRampToValueAtTime(3520, finalT + 0.4);
 
     const finalGain = this.ctx.createGain();
@@ -609,9 +840,26 @@ class SoundManager {
   }
 }
 
+// === Stats Display ===
+function updateStats(stats) {
+  const blocksEl = document.getElementById('stat-blocks');
+  const addrsEl = document.getElementById('stat-addresses');
+  const tpsEl = document.getElementById('stat-tps');
+
+  if (blocksEl) blocksEl.textContent = formatCompact(stats.totalBlocks);
+  if (addrsEl) addrsEl.textContent = formatCompact(stats.totalAddresses);
+  if (tpsEl) {
+    const txToday = parseInt(stats.txToday) || 0;
+    // Estimate average TPS from today's transactions
+    const now = new Date();
+    const secondsToday = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    const avgTps = secondsToday > 0 ? Math.round(txToday / secondsToday) : 0;
+    tpsEl.textContent = avgTps > 0 ? avgTps.toLocaleString() : '--';
+  }
+}
+
 // === App Init ===
 const digitContainer = document.getElementById('digit-container');
-const counterEl = document.getElementById('counter');
 const txLogEl = document.getElementById('tx-log');
 const latencyCanvas = document.getElementById('latency-canvas');
 const latencyValueEl = document.getElementById('latency-value');
@@ -628,48 +876,65 @@ const raceTracksEl = document.getElementById('race-tracks');
 const raceCountdownEl = document.getElementById('race-countdown');
 const chainRace = new ChainRace(raceTracksEl, raceCountdownEl);
 
-let transactionCount = CONFIG.startValue;
+const feed = new LiveFeed();
+const sessionCounterEl = document.getElementById('session-counter');
+
 let lastFlash = 0;
+let sessionStartTotal = 0;
+let sessionTxCount = 0;
 
 function checkMilestones(value) {
   const currentFlash = Math.floor(value / CONFIG.flashInterval) * CONFIG.flashInterval;
-
   if (currentFlash > lastFlash && currentFlash > 0) {
     lastFlash = currentFlash;
     sound.playJackpot();
-    if (window.speedLinesBurst) {
-      window.speedLinesBurst();
-    }
+    if (window.speedLinesBurst) window.speedLinesBurst();
   }
 }
 
-// Initialize counter display
-roller.update(transactionCount);
+// Wire up feed callbacks
+feed.onTxCount = (total) => {
+  roller.update(total);
+  checkMilestones(total);
 
-// Start mock feed
-const feed = new MockFeed(CONFIG.tps);
-feed.onTransaction((count) => {
-  transactionCount += count;
-  roller.update(transactionCount);
-  checkMilestones(transactionCount);
-
-  // Add to transaction log (throttle to ~10 per second for readability)
-  if (transactionCount % 5 === 0) {
-    txLog.addTransaction(mockTxData());
+  // Update session counter
+  if (sessionStartTotal > 0) {
+    sessionTxCount = total - sessionStartTotal;
+    if (sessionCounterEl) {
+      sessionCounterEl.textContent = sessionTxCount.toLocaleString();
+    }
   }
-});
+};
 
-// Start on overlay click (enables Web Audio)
+feed.onNewTx = (tx) => {
+  txLog.addTransaction(tx);
+};
+
+feed.onBlockTime = (ms) => {
+  latencyGraph.pushReal(ms);
+};
+
+feed.onStats = (stats) => {
+  updateStats(stats);
+};
+
+// Start on overlay click
 const overlay = document.getElementById('start-overlay');
 if (overlay) {
-  overlay.addEventListener('click', () => {
+  overlay.addEventListener('click', async () => {
     sound.init();
+
+    // Initialize with real data
+    const initialTotal = await feed.init();
+    sessionStartTotal = initialTotal;
+    roller.update(initialTotal);
+    lastFlash = Math.floor(initialTotal / CONFIG.flashInterval) * CONFIG.flashInterval;
+
     feed.start();
     latencyGraph.start();
     chainRace.start();
+
     overlay.classList.add('hidden');
     setTimeout(() => overlay.remove(), 500);
   });
-} else {
-  setTimeout(() => { feed.start(); latencyGraph.start(); chainRace.start(); }, 500);
 }

@@ -11,6 +11,19 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+// MegaETH full brand palette
+const BRAND_COLORS = [
+  { r: 255, g: 138, b: 168 }, // hot pink #FF8AA8
+  { r: 245, g: 175, b: 148 }, // coral #F5AF94
+  { r: 245, g: 148, b: 157 }, // pink #F5949D
+  { r: 247, g: 134, b: 198 }, // magenta #F786C6
+  { r: 144, g: 215, b: 159 }, // mint #90D79F
+  { r: 109, g: 208, b: 169 }, // teal #6DD0A9
+  { r: 126, g: 170, b: 212 }, // sky blue #7EAAD4
+  { r: 112, g: 186, b: 210 }, // light blue #70BAD2
+  { r: 236, g: 232, b: 232 }, // moon white #ECE8E8
+];
+
 class SpeedLine {
   constructor(cx, cy) {
     const angle = Math.random() * Math.PI * 2;
@@ -24,9 +37,7 @@ class SpeedLine {
     this.life = 1;
     this.decay = 0.015 + Math.random() * 0.01;
     this.startDist = 30 + Math.random() * 60;
-    this.color = Math.random() > 0.4
-      ? { r: 0, g: 240, b: 255 }
-      : { r: 255, g: 255, b: 255 };
+    this.color = BRAND_COLORS[Math.floor(Math.random() * BRAND_COLORS.length)];
   }
 
   update() {
@@ -71,7 +82,7 @@ function spawnSpeedLines() {
   const flash = document.getElementById('screen-flash');
   if (flash) {
     flash.classList.remove('active');
-    void flash.offsetWidth; // force reflow
+    void flash.offsetWidth;
     flash.classList.add('active');
     setTimeout(() => flash.classList.remove('active'), 200);
   }
